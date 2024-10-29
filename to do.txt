@@ -1,0 +1,2 @@
+add a function to pre require Woocommerce plugin before activating this plugin.
+add a function to add a new product in the WooCommerce after this plugin is activated and take the created products ID
