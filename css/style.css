@@ -124,3 +124,7 @@ td {
 #booking-summary tr td:first-child {
   color: #878787;
 }
+
+#total-price {
+  margin-bottom: 0;
+}

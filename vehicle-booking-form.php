@@ -87,17 +87,6 @@ add_action('plugins_loaded', 'vehicle_booking_check_plugin_version');
 
 
 
-
-
-
-
-
-
-
-
-
-
-
 // Create table for bookings on plugin activation
 function vehicle_booking_create_table()
 {
@@ -597,6 +586,52 @@ function vehicle_booking_form_shortcode()
                     <button type="button" id="add-vehicle-btn">Add Another Vehicle</button>
                 </div>
 
+                <!-- Hidden vehicle group template -->
+                <div class="vehicle-group-template" style="display: none;">
+                    <div class="vehicle-group">
+                        <div class="selector">
+                            <label for="vehicle_type[]">Type of vehicle</label>
+                            <select name="vehicle_type[]" class="vehicle-type">
+                                <option value="">Select vehicle...</option>
+                                <option value="Car">Car</option>
+                                <option value="Jeep">Jeep</option>
+                                <option value="Minivan">Minivan</option>
+                                <option value="Camper">Camper</option>
+                                <option value="Bike">Bike</option>
+                                <option value="Motorcycle">Motorcycle</option>
+                            </select>
+                        </div>
+                        <!-- Other vehicle fields, initially hidden -->
+                        <div class="vehicle-details" style="display: none;">
+                            <div class="vehicle-dimensions">
+                                <label for="vehicle_width[]">Width (m)</label>
+                                <input type="number" name="vehicle_width[]" step="0.01" min="0">
+
+                                <label for="vehicle_length[]">Length (m)</label>
+                                <input type="number" name="vehicle_length[]" step="0.01" min="0">
+                            </div>
+
+                            <div class="vehicle-brand-model">
+                                <div class="input">
+                                    <label for="vehicle_brand[]">Brand</label>
+                                    <input type="text" name="vehicle_brand[]">
+                                </div>
+
+                                <div class="input">
+                                    <label for="vehicle_model[]">Model</label>
+                                    <input type="text" name="vehicle_model[]">
+                                </div>
+
+                                <div class="input">
+                                    <label for="plate_number[]">Plate Number</label>
+                                    <input type="text" name="plate_number[]">
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Remove Vehicle Button -->
+                        <button type="button" class="remove-vehicle-btn">Remove Vehicle</button>
+                    </div>
+                </div>
 
                 <!-- Submit Button -->
                 <button class="proceed" type="submit" name="submit_vehicle_booking">Proceed to Checkout</button>
@@ -677,14 +712,18 @@ function vehicle_booking_form_shortcode()
                     });
                 }
 
-                // Add another vehicle group
+                // Add another vehicle group using the hidden template
                 addVehicleBtn.addEventListener("click", function() {
-                    var vehicleGroup = document.querySelector(".vehicle-group").cloneNode(true);
+                    var vehicleGroupTemplate = document.querySelector(".vehicle-group-template .vehicle-group");
+                    var vehicleGroup = vehicleGroupTemplate.cloneNode(true);
+
+                    // Clear input values
                     vehicleGroup.querySelectorAll("input").forEach(function(input) {
-                        input.value = ""; // Clear input values
+                        input.value = "";
                     });
                     vehicleGroup.querySelector(".vehicle-type").value = ""; // Reset select
                     vehicleGroup.querySelector(".vehicle-details").style.display = "none"; // Hide details
+
                     vehiclesContainer.appendChild(vehicleGroup);
 
                     // Add event listener for vehicle type change
@@ -699,8 +738,10 @@ function vehicle_booking_form_shortcode()
                     widthInput.addEventListener('input', updateSummary);
                     lengthInput.addEventListener('input', updateSummary);
 
+                    // Add remove button functionality
                     addRemoveVehicleFunctionality(vehicleGroup);
                 });
+
 
                 // Update fields visibility when vehicle type changes
                 vehiclesContainer.addEventListener("change", function(event) {
