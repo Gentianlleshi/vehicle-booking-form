@@ -17,31 +17,38 @@ if (is_admin()) {
 function vehicle_form_styles()
 {
     wp_enqueue_style('vehicle-booking-form-style', plugin_dir_url(__FILE__) . 'css/style.css');
+    wp_enqueue_script('vehicle-booking-form-script', plugin_dir_url(__FILE__) . 'js/script.js', array('jquery'), null, true);
+
+    // Enqueue Flatpickr CSS and JavaScript
+    wp_enqueue_style('flatpickr-css', 'https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css');
+    wp_enqueue_script('flatpickr-js', 'https://cdn.jsdelivr.net/npm/flatpickr', array('jquery'), null, true);
 }
 add_action('wp_enqueue_scripts', 'vehicle_form_styles');
 
 
-function enqueue_vehicle_booking_calendar_assets()
+function enqueue_vehicle_booking_calendar_assets($route)
 {
-    // Use the FullCalendar CDN URL from cdnjs for version 6.1.15
+    // Enqueue FullCalendar CSS and JavaScript
     wp_enqueue_style('fullcalendar-css', 'https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/6.1.15/index.global.min.css');
     wp_enqueue_script('fullcalendar-js', 'https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/6.1.15/index.global.min.js', array('jquery'), null, true);
 
-    // Enqueue your custom script to initialize the calendar (depends on FullCalendar JS)
+    // Enqueue custom calendar initialization script and CSS
     wp_enqueue_script('vehicle-booking-calendar', plugin_dir_url(__FILE__) . 'js/vehicle-booking-calendar.js', array('fullcalendar-js'), null, true);
-    // Enqueue your custom css for the calendar
     wp_enqueue_style('vehicle-booking-calendar-style', plugin_dir_url(__FILE__) . 'css/vehicle-booking-calendar.css');
 
-    // Prepare bookings data
     global $wpdb;
     $table_name = $wpdb->prefix . "vehicle_bookings";
-    $bookings = $wpdb->get_results("SELECT * FROM $table_name");
+
+    // Fetch only bookings matching the specified route
+    $bookings = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_name WHERE route = %s", $route));
 
     $bookings_data = array_map(function ($booking) {
+        $backgroundColor = ($booking->travel_method === 'Bus') ? 'red' : 'blue';
         return array(
-            'title' => $booking->route,
+            'title' => $booking->first_name . ' ' . $booking->last_name . ' (' . $booking->travel_method . ')',
             'start' => $booking->date,
-            'name' => $booking->first_name . ' ' . $booking->last_name,
+            'route' => $booking->route,
+            'backgroundColor' => $backgroundColor, // Set background color based on travel method
             'adults' => $booking->adults,
             'children' => $booking->children,
             'travel_method' => $booking->travel_method,
@@ -51,14 +58,15 @@ function enqueue_vehicle_booking_calendar_assets()
             'vehicle_brand' => $booking->vehicle_brand,
             'vehicle_model' => $booking->vehicle_model,
             'plate_number' => $booking->plate_number,
-            // 'description' => 'Travel Method: ' . $booking->travel_method . ', Adults: ' . $booking->adults . ', Children: ' . $booking->children . ', Total Price: ' . $booking->total_price . 'Surface Area (m²)' . $booking->surface_area . ', Vehicle Type: ' . $booking->vehicle_type . ', Vehicle Brand: ' . $booking->vehicle_brand . ', Vehicle Model: ' . $booking->vehicle_model . ', Plate Number: ' . $booking->plate_number,
+            // 'description' => $booking->description,
         );
     }, $bookings);
 
 
-    // Pass bookings data to JS
+    // Pass the filtered bookings data to JavaScript
     wp_localize_script('vehicle-booking-calendar', 'vehicleBookingsData', array('bookings' => $bookings_data));
 }
+
 add_action('admin_enqueue_scripts', 'enqueue_vehicle_booking_calendar_assets');
 
 
@@ -265,7 +273,7 @@ function handle_vehicle_booking_submission()
             WC()->session->set('vehicle_booking_custom_price', $total_price);
 
             // Add product to WooCommerce cart with custom price and redirect to checkout
-            $product_id = 22; // Replace with your WooCommerce product ID for booking
+            $product_id = 58; // Replace with your WooCommerce product ID for booking
             $quantity = 1; // Default quantity is 1
 
             // Add custom price as cart item data
@@ -273,7 +281,29 @@ function handle_vehicle_booking_submission()
                 'custom_price' => $total_price,
                 'route'        => $route,
                 'travel_method' => $travel_method,
+                'adults'       => $adults,
+                'children'     => $children,
+                'date'         => $date,
+                'vehicle_type' => $vehicle_types,
+                'vehicle_brand' => $vehicle_brands,
+                'vehicle_model' => $vehicle_models,
+                'plate_number' => $plate_numbers,
+                'total_surface_area' => $total_surface_area,
             );
+
+            // Create a draft post for this booking
+            $post_data = array(
+                'post_title'    => "Booking for $first_name $last_name on $date",
+                'post_content'  => json_encode($_POST), // Store all data as JSON if needed
+                'post_status'   => 'draft',
+                'post_type'     => 'vehicle_booking',
+            );
+            $post_id = wp_insert_post($post_data);
+
+            if ($post_id) {
+                // Save post ID in session to access later in the completion step
+                WC()->session->set('vehicle_booking_post_id', $post_id);
+            }
 
             WC()->cart->empty_cart(); // Empty the cart before adding new item
             $cart_item_key = WC()->cart->add_to_cart($product_id, $quantity, 0, array(), $cart_item_data);
@@ -311,7 +341,47 @@ function vehicle_booking_add_order_item_meta($item, $cart_item_key, $values, $or
 
 add_action('woocommerce_checkout_create_order_line_item', 'vehicle_booking_add_order_item_meta', 10, 4);
 
+add_action('woocommerce_order_status_completed', 'save_booking_to_calendar_after_order_complete', 10, 1);
+function save_booking_to_calendar_after_order_complete($order_id)
+{
+    // Retrieve post ID from session
+    $post_id = WC()->session->get('vehicle_booking_post_id');
 
+    if ($post_id) {
+        // Retrieve form data stored in post content
+        $post_data = get_post($post_id);
+        $booking_data = json_decode($post_data->post_content, true);
+
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'vehicle_bookings';
+
+        // Insert into your bookings table
+        $wpdb->insert($table_name, [
+            'first_name'    => sanitize_text_field($booking_data['first_name']),
+            'last_name'     => sanitize_text_field($booking_data['last_name']),
+            'email'         => sanitize_email($booking_data['email']),
+            'phone'         => sanitize_text_field($booking_data['phone']),
+            'adults'        => intval($booking_data['adults']),
+            'children'      => intval($booking_data['children']),
+            'date'          => sanitize_text_field($booking_data['date']),
+            'route'         => sanitize_text_field($booking_data['route']),
+            'travel_method' => sanitize_text_field($booking_data['travel_method']),
+            'vehicle_type'  => implode(' + ', array_map('sanitize_text_field', $booking_data['vehicle_type'])),
+            'vehicle_brand' => implode(' + ', array_map('sanitize_text_field', $booking_data['vehicle_brand'])),
+            'vehicle_model' => implode(' + ', array_map('sanitize_text_field', $booking_data['vehicle_model'])),
+            'plate_number'  => implode(' + ', array_map('sanitize_text_field', $booking_data['plate_number'])),
+            'surface_area'  => floatval($booking_data['total_surface_area']),
+            'total_price'   => floatval($booking_data['total_price']),
+            'created_at'    => current_time('mysql'),
+        ]);
+
+        // Update the post status to published
+        wp_update_post(array(
+            'ID'           => $post_id,
+            'post_status'  => 'publish',
+        ));
+    }
+}
 
 // Shortcode to display the booking form
 function vehicle_booking_form_shortcode()
@@ -342,57 +412,78 @@ function vehicle_booking_form_shortcode()
         wc_print_notices();
     }
 ?>
+    <div class="title">
+        <h4>Booking information</h4>
+    </div>
     <div id="booking-form-wrapper">
         <div id="form-section">
             <form id="vehicle-booking-form" method="post" action="<?php echo esc_url($_SERVER['REQUEST_URI']); ?>">
 
-                <h4>Booking information</h4>
-
                 <!-- Add this section above the "Customer Details" -->
-                <label for="route">Select Route</label>
-                <select name="route" id="route" required>
-                    <option value="">-- Select Route --</option>
-                    <option value="KOMAN – FIERZE" <?php selected(isset($_POST['route']) ? $_POST['route'] : '', 'KOMAN – FIERZE'); ?>>KOMAN – FIERZE</option>
-                    <option value="FIERZE – KOMAN" <?php selected(isset($_POST['route']) ? $_POST['route'] : '', 'FIERZE – KOMAN'); ?>>FIERZE – KOMAN</option>
-                </select>
+                <div class="selector">
+                    <label for="route">Select Route</label>
+                    <select name="route" id="route" required>
+                        <option value="" selected disabled>-- Select Route --</option>
+                        <option value="KOMAN – FIERZE" <?php selected(isset($_POST['route']) ? $_POST['route'] : '', 'KOMAN – FIERZE'); ?>>KOMAN – FIERZE</option>
+                        <option value="FIERZE – KOMAN" <?php selected(isset($_POST['route']) ? $_POST['route'] : '', 'FIERZE – KOMAN'); ?>>FIERZE – KOMAN</option>
+                    </select>
+                </div>
 
 
                 <!-- Travel Method Selection -->
-                <label for="travel_method">Select Travel Method</label>
-                <select name="travel_method" id="travel_method" required>
-                    <option value="">-- Select Travel Method --</option>
-                    <option value="Ferry" <?php selected(isset($_POST['travel_method']) ? $_POST['travel_method'] : '', 'Ferry'); ?>>Ferry</option>
-                    <option value="Bus" <?php selected(isset($_POST['travel_method']) ? $_POST['travel_method'] : '', 'Bus'); ?>>Bus</option>
-                </select>
-
+                <div class="selector">
+                    <label for="travel_method">Select Travel Method</label>
+                    <select name="travel_method" id="travel_method" required>
+                        <option value="" selected disabled>-- Select Travel Method --</option>
+                        <option value="Ferry" <?php selected(isset($_POST['travel_method']) ? $_POST['travel_method'] : '', 'Ferry'); ?>>Ferry</option>
+                        <option value="Bus" <?php selected(isset($_POST['travel_method']) ? $_POST['travel_method'] : '', 'Bus'); ?>>Bus</option>
+                    </select>
+                </div>
 
                 <!-- Customer Details -->
-                <label for="first_name">First Name</label>
-                <input type="text" name="first_name" value="<?php echo isset($_POST['first_name']) ? esc_attr($_POST['first_name']) : ''; ?>" required>
+                <div class="input">
+                    <label for="first_name">First Name</label>
+                    <input type="text" name="first_name" value="<?php echo isset($_POST['first_name']) ? esc_attr($_POST['first_name']) : ''; ?>" required>
+                </div>
 
+                <div class=" input">
+                    <label for="last_name">Last Name</label>
+                    <input type="text" name="last_name" value="<?php echo isset($_POST['last_name']) ? esc_attr($_POST['last_name']) : ''; ?>" required>
+                </div>
 
-                <label for="last_name">Last Name</label>
-                <input type="text" name="last_name" value="<?php echo isset($_POST['last_name']) ? esc_attr($_POST['last_name']) : ''; ?>" required>
+                <div class="input">
+                    <label for="email">Email</label>
+                    <input type="email" name="email" value="<?php echo isset($_POST['email']) ? esc_attr($_POST['email']) : ''; ?>" required>
+                </div>
 
-                <label for="email">Email</label>
-                <input type="email" name="email" value="<?php echo isset($_POST['email']) ? esc_attr($_POST['email']) : ''; ?>" required>
+                <div class="input">
+                    <label for="phone">Phone</label>
+                    <input type="text" name="phone" value="<?php echo isset($_POST['phone']) ? esc_attr($_POST['phone']) : ''; ?>" required>
+                </div>
 
-                <label for="phone">Phone</label>
-                <input type="text" name="phone" value="<?php echo isset($_POST['phone']) ? esc_attr($_POST['phone']) : ''; ?>" required>
+                <div class="input">
+                    <label for="adults">N. Adults</label>
+                    <input type="number" name="adults" min="1" value="<?php echo isset($_POST['adults']) ? esc_attr($_POST['adults']) : ''; ?>" required>
+                </div>
 
-                <label for="adults">N. Adults</label>
-                <input type="number" name="adults" min="1" value="<?php echo isset($_POST['adults']) ? esc_attr($_POST['adults']) : ''; ?>" required>
+                <div class="input">
+                    <label for="children">N. Children (0-6 years)</label>
+                    <input type="number" name="children" min="0" value="<?php echo isset($_POST['children']) ? esc_attr($_POST['children']) : ''; ?>">
+                </div>
 
-                <label for="children">N. Children (0-6 years)</label>
-                <input type="number" name="children" min="0" value="<?php echo isset($_POST['children']) ? esc_attr($_POST['children']) : ''; ?>">
+                <!-- <div class="input">
+                    <label for="date">Select a Date</label>
+                    <input type="date" name="date" required>
+                </div> -->
 
-                <label for="date">Select a Date</label>
-                <input type="date" name="date" required>
+                <div class="input">
+                    <label for="date">Select a Date</label>
+                    <input type="text" id="date-picker" name="date" placeholder="YYYY-MM-DD" required>
+                </div>
 
                 <!-- Show Vehicle Information Button -->
                 <button type="button" id="show-vehicle-info-btn">Do you have a car?</button>
 
-                <!-- Vehicle Details Section -->
                 <!-- Vehicle Details Section -->
                 <div id="vehicles-section" style="<?php echo !empty($vehicle_types_post) ? 'display: block;' : 'display: none;'; ?>">
                     <div id="vehicles-container">
@@ -401,36 +492,48 @@ function vehicle_booking_form_shortcode()
                             foreach ($vehicle_types_post as $index => $vehicle_type_post) {
                         ?>
                                 <div class="vehicle-group">
-                                    <label for="vehicle_type[]">Type of vehicle</label>
-                                    <select name="vehicle_type[]" class="vehicle-type">
-                                        <option value="">Select vehicle...</option>
-                                        <option value="Car" <?php selected($vehicle_type_post, 'Car'); ?>>Car</option>
-                                        <option value="Jeep" <?php selected($vehicle_type_post, 'Jeep'); ?>>Jeep</option>
-                                        <option value="Minivan" <?php selected($vehicle_type_post, 'Minivan'); ?>>Minivan</option>
-                                        <option value="Camper" <?php selected($vehicle_type_post, 'Camper'); ?>>Camper</option>
-                                        <option value="Bike" <?php selected($vehicle_type_post, 'Bike'); ?>>Bike</option>
-                                        <option value="Motorcycle" <?php selected($vehicle_type_post, 'Motorcycle'); ?>>Motorcycle</option>
-                                    </select>
+                                    <div class="selector">
+                                        <label for="vehicle_type[]">Type of vehicle</label>
+                                        <select name="vehicle_type[]" class="vehicle-type">
+                                            <option value="" selected disabled>Select vehicle...</option>
+                                            <option value="Car" <?php selected($vehicle_type_post, 'Car'); ?>>Car</option>
+                                            <option value="Jeep" <?php selected($vehicle_type_post, 'Jeep'); ?>>Jeep</option>
+                                            <option value="Minivan" <?php selected($vehicle_type_post, 'Minivan'); ?>>Minivan</option>
+                                            <option value="Camper" <?php selected($vehicle_type_post, 'Camper'); ?>>Camper</option>
+                                            <option value="Bike" <?php selected($vehicle_type_post, 'Bike'); ?>>Bike</option>
+                                            <option value="Motorcycle" <?php selected($vehicle_type_post, 'Motorcycle'); ?>>Motorcycle</option>
+                                        </select>
+                                    </div>
 
                                     <!-- Other vehicle fields, conditionally displayed -->
                                     <div class="vehicle-details" style="<?php echo in_array($vehicle_type_post, array('Bike', 'Motorcycle', '')) ? 'display: none;' : 'display: block;'; ?>">
                                         <div class="vehicle-dimensions">
-                                            <label for="vehicle_width[]">Width (m)</label>
-                                            <input type="number" name="vehicle_width[]" step="0.01" min="0" value="<?php echo isset($vehicle_widths_post[$index]) ? esc_attr($vehicle_widths_post[$index]) : ''; ?>">
+                                            <div class="input">
+                                                <label for="vehicle_width[]">Width (m)</label>
+                                                <input type="number" name="vehicle_width[]" step="0.01" min="0" value="<?php echo isset($vehicle_widths_post[$index]) ? esc_attr($vehicle_widths_post[$index]) : ''; ?>">
+                                            </div>
 
-                                            <label for="vehicle_length[]">Length (m)</label>
-                                            <input type="number" name="vehicle_length[]" step="0.01" min="0" value="<?php echo isset($vehicle_lengths_post[$index]) ? esc_attr($vehicle_lengths_post[$index]) : ''; ?>">
+                                            <div class="input">
+                                                <label for="vehicle_length[]">Length (m)</label>
+                                                <input type="number" name="vehicle_length[]" step="0.01" min="0" value="<?php echo isset($vehicle_lengths_post[$index]) ? esc_attr($vehicle_lengths_post[$index]) : ''; ?>">
+                                            </div>
                                         </div>
 
                                         <div class="vehicle-brand-model">
-                                            <label for="vehicle_brand[]">Brand</label>
-                                            <input type="text" name="vehicle_brand[]" value="<?php echo isset($vehicle_brands_post[$index]) ? esc_attr($vehicle_brands_post[$index]) : ''; ?>">
+                                            <div class="input">
+                                                <label for="vehicle_brand[]">Brand</label>
+                                                <input type="text" name="vehicle_brand[]" value="<?php echo isset($vehicle_brands_post[$index]) ? esc_attr($vehicle_brands_post[$index]) : ''; ?>">
+                                            </div>
 
-                                            <label for="vehicle_model[]">Model</label>
-                                            <input type="text" name="vehicle_model[]" value="<?php echo isset($vehicle_models_post[$index]) ? esc_attr($vehicle_models_post[$index]) : ''; ?>">
+                                            <div class="input">
+                                                <label for="vehicle_model[]">Model</label>
+                                                <input type="text" name="vehicle_model[]" value="<?php echo isset($vehicle_models_post[$index]) ? esc_attr($vehicle_models_post[$index]) : ''; ?>">
+                                            </div>
 
-                                            <label for="plate_number[]">Plate Number</label>
-                                            <input type="text" name="plate_number[]" value="<?php echo isset($plate_numbers_post[$index]) ? esc_attr($plate_numbers_post[$index]) : ''; ?>">
+                                            <div class="input">
+                                                <label for="plate_number[]">Plate Number</label>
+                                                <input type="text" name="plate_number[]" value="<?php echo isset($plate_numbers_post[$index]) ? esc_attr($plate_numbers_post[$index]) : ''; ?>">
+                                            </div>
                                         </div>
                                     </div>
 
@@ -443,17 +546,18 @@ function vehicle_booking_form_shortcode()
                             // If no vehicles were submitted, display a default empty vehicle group
                             ?>
                             <div class="vehicle-group">
-                                <label for="vehicle_type[]">Type of vehicle</label>
-                                <select name="vehicle_type[]" class="vehicle-type">
-                                    <option value="">Select vehicle...</option>
-                                    <option value="Car">Car</option>
-                                    <option value="Jeep">Jeep</option>
-                                    <option value="Minivan">Minivan</option>
-                                    <option value="Camper">Camper</option>
-                                    <option value="Bike">Bike</option>
-                                    <option value="Motorcycle">Motorcycle</option>
-                                </select>
-
+                                <div class="selector">
+                                    <label for="vehicle_type[]">Type of vehicle</label>
+                                    <select name="vehicle_type[]" class="vehicle-type">
+                                        <option value="">Select vehicle...</option>
+                                        <option value="Car">Car</option>
+                                        <option value="Jeep">Jeep</option>
+                                        <option value="Minivan">Minivan</option>
+                                        <option value="Camper">Camper</option>
+                                        <option value="Bike">Bike</option>
+                                        <option value="Motorcycle">Motorcycle</option>
+                                    </select>
+                                </div>
                                 <!-- Other vehicle fields, initially hidden -->
                                 <div class="vehicle-details" style="display: none;">
                                     <div class="vehicle-dimensions">
@@ -465,14 +569,20 @@ function vehicle_booking_form_shortcode()
                                     </div>
 
                                     <div class="vehicle-brand-model">
-                                        <label for="vehicle_brand[]">Brand</label>
-                                        <input type="text" name="vehicle_brand[]">
+                                        <div class="input">
+                                            <label for="vehicle_brand[]">Brand</label>
+                                            <input type="text" name="vehicle_brand[]">
+                                        </div>
 
-                                        <label for="vehicle_model[]">Model</label>
-                                        <input type="text" name="vehicle_model[]">
+                                        <div class="input">
+                                            <label for="vehicle_model[]">Model</label>
+                                            <input type="text" name="vehicle_model[]">
+                                        </div>
 
-                                        <label for="plate_number[]">Plate Number</label>
-                                        <input type="text" name="plate_number[]">
+                                        <div class="input">
+                                            <label for="plate_number[]">Plate Number</label>
+                                            <input type="text" name="plate_number[]">
+                                        </div>
                                     </div>
                                 </div>
 
@@ -489,7 +599,7 @@ function vehicle_booking_form_shortcode()
 
 
                 <!-- Submit Button -->
-                <button type="submit" name="submit_vehicle_booking">Proceed to Checkout</button>
+                <button class="proceed" type="submit" name="submit_vehicle_booking">Proceed to Checkout</button>
             </form>
             <div id="summary-section">
                 <h4>Booking Summary</h4>
@@ -662,17 +772,24 @@ function vehicle_booking_form_shortcode()
                     // Route selected
                     var routeRow = document.createElement('tr');
                     var routeCell = document.createElement('td');
-                    routeCell.colSpan = 3;
-                    routeCell.textContent = 'Route selected: ' + selectedRoute;
+                    var routeCellContent = document.createElement('td');
+                    // routeCell.colSpan = 3;
+                    routeCell.textContent = 'Route selected: ';
+                    // routeCellContent.colSpan = 3;
+                    routeCellContent.textContent = '' + selectedRoute;
                     routeRow.appendChild(routeCell);
+                    routeRow.appendChild(routeCellContent);
                     summaryTable.appendChild(routeRow);
 
                     // Travel method selected
                     var travelMethodRow = document.createElement('tr');
                     var travelMethodCell = document.createElement('td');
-                    travelMethodCell.colSpan = 3;
-                    travelMethodCell.textContent = 'Travel method: ' + selectedTravelMethod;
+                    var travelMethodCellContent = document.createElement('td');
+                    // travelMethodCell.colSpan = 3;
+                    travelMethodCell.textContent = 'Travel method: ';
+                    travelMethodCellContent.textContent = '' + selectedTravelMethod;
                     travelMethodRow.appendChild(travelMethodCell);
+                    travelMethodRow.appendChild(travelMethodCellContent);
                     summaryTable.appendChild(travelMethodRow);
 
                     // Number of adults
@@ -687,7 +804,7 @@ function vehicle_booking_form_shortcode()
                     totalPrice += adultsTotal;
 
                     var adultsRow = document.createElement('tr');
-                    adultsRow.innerHTML = '<td>Adults (' + adults + ' x $' + adultPrice + ')</td><td></td><td>$' + adultsTotal.toFixed(2) + '</td>';
+                    adultsRow.innerHTML = '<td>Adults (' + adults + ' x €' + adultPrice + ')</td><td>€' + adultsTotal.toFixed(2) + '</td>';
                     summaryTable.appendChild(adultsRow);
 
                     // Number of children
@@ -702,7 +819,7 @@ function vehicle_booking_form_shortcode()
                     totalPrice += childrenTotal;
 
                     var childrenRow = document.createElement('tr');
-                    childrenRow.innerHTML = '<td>Children (' + children + ' x $' + childPrice + ')</td><td></td><td>$' + childrenTotal.toFixed(2) + '</td>';
+                    childrenRow.innerHTML = '<td>Children (' + children + ' x €' + childPrice + ')</td><td>€' + childrenTotal.toFixed(2) + '</td>';
                     summaryTable.appendChild(childrenRow);
 
                     // Vehicles
@@ -734,14 +851,14 @@ function vehicle_booking_form_shortcode()
 
                             totalPrice += vehiclePrice;
 
-                            vehicleRow.innerHTML = '<td>' + vehicleDescription + '</td><td></td><td>$' + vehiclePrice.toFixed(2) + '</td>';
+                            vehicleRow.innerHTML = '<td>' + vehicleDescription + '</td><td>€' + vehiclePrice.toFixed(2) + '</td>';
                             summaryTable.appendChild(vehicleRow);
                         }
                     });
 
                     // Update total price
                     var totalPriceElement = document.getElementById('total-price');
-                    totalPriceElement.textContent = 'Total to pay now: $' + totalPrice.toFixed(2);
+                    totalPriceElement.textContent = 'Total to pay now: €' + totalPrice.toFixed(2);
                 }
             });
         </script>

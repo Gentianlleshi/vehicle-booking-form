@@ -3,70 +3,73 @@
 // Add admin menu for viewing bookings
 function vehicle_booking_admin_menu()
 {
+    // Main Menu: Vehicle Bookings Calendar
     add_menu_page(
-        'Vehicle Bookings', // Page Title
-        'Vehicle Bookings', // Menu Title
-        'manage_options', // Capability
-        'vehicle-bookings', // Menu Slug
-        'vehicle_booking_admin_page', // Callback function
-        'dashicons-calendar-alt', // Icon
-        20 // Position
+        'Vehicle Bookings Calendar', // Page Title
+        'Vehicle Bookings Calendar', // Menu Title
+        'manage_options',            // Capability
+        'vehicle-bookings-calendar',  // Menu Slug
+        '',                          // No callback function for the main menu, as it's just a container
+        'dashicons-calendar-alt',     // Icon
+        20                            // Position
+    );
+
+    // Submenu: KOMAN – FIERZE
+    add_submenu_page(
+        'vehicle-bookings-calendar',   // Parent slug
+        'KOMAN – FIERZE Bookings',     // Page title
+        'KOMAN – FIERZE',              // Menu title
+        'manage_options',              // Capability
+        'vehicle-bookings-koman-fierze', // Menu slug
+        function () {
+            vehicle_booking_admin_page('KOMAN – FIERZE');
+        }
+    );
+
+    // Submenu: FIERZE – KOMAN
+    add_submenu_page(
+        'vehicle-bookings-calendar',   // Parent slug
+        'FIERZE – KOMAN Bookings',     // Page title
+        'FIERZE – KOMAN',              // Menu title
+        'manage_options',              // Capability
+        'vehicle-bookings-fierze-koman', // Menu slug
+        function () {
+            vehicle_booking_admin_page('FIERZE – KOMAN');
+        }
+    );
+
+    // Submenu: Settings
+    add_submenu_page(
+        'vehicle-bookings-calendar', // Parent slug
+        'Vehicle Booking Settings',  // Page title
+        'Settings',                  // Menu title
+        'manage_options',            // Capability
+        'vehicle-booking-settings',  // Menu slug
+        'vehicle_booking_settings_page' // Callback function for settings
     );
 }
 add_action('admin_menu', 'vehicle_booking_admin_menu');
 
 
-
-// Admin page content: Display bookings based on selected date and add the remove button
-function vehicle_booking_admin_page()
+function hide_main_vehicle_bookings_menu()
 {
-    global $wpdb;
-    $table_name = $wpdb->prefix . "vehicle_bookings";
-
-    // Add additional tables if needed
-    // Example: $related_table = $wpdb->prefix . "related_table";
-
-    // Check if the admin clicked "Remove All Bookings"
-    if (isset($_POST['remove_all_bookings'])) {
-        // Delete all bookings from the primary table
-        $wpdb->query("DELETE FROM $table_name");
-
-        // WooCommerce: Delete all orders
-        if (class_exists('WC_Order')) {
-            $order_query = new WC_Order_Query(array(
-                'limit' => -1, // No limit, retrieve all orders
-                'return' => 'ids', // Return only order IDs
-            ));
-            $orders = $order_query->get_orders();
-
-            // Loop through and delete each order
-            foreach ($orders as $order_id) {
-                wc_delete_order($order_id);
-            }
+    echo '<style>
+        #toplevel_page_vehicle-bookings-calendar li.wp-first-item {
+            display: none;
         }
+    </style>';
+}
+add_action('admin_head', 'hide_main_vehicle_bookings_menu');
 
-        // Show success message
-        echo '<div class="updated"><p>All records and WooCommerce orders have been removed.</p></div>';
-    }
 
-    // If the admin selects a date, filter the bookings by that date.
-    if (isset($_POST['booking_date'])) {
-        // Convert the selected date to MySQL format
-        $date = date('Y-m-d', strtotime(sanitize_text_field($_POST['booking_date'])));
 
-        // Query to get bookings for the selected date
-        $bookings = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM $table_name WHERE date = %s",
-            $date
-        ));
-    } else {
-        // If no date is selected, retrieve all bookings
-        $bookings = $wpdb->get_results("SELECT * FROM $table_name");
-    }
-
+// Admin page content: Display bookings based on selected date and specific route
+function vehicle_booking_admin_page($route)
+{
+    enqueue_vehicle_booking_calendar_assets($route);
 ?>
     <div class="wrap">
-        <h1>Vehicle Bookings Calendar</h1>
+        <h1><?php echo esc_html($route); ?> Bookings</h1>
         <div id="calendar"></div>
     </div>
     <div id="eventModal" class="modal" style="display:none;">
@@ -74,6 +77,7 @@ function vehicle_booking_admin_page()
             <span class="close">&times;</span>
             <h2 id="modalTitle"></h2>
             <h3 id="modalName"></h3>
+            <!-- <p id="modalRoute"></p> -->
             <p id="modalAdults"></p>
             <p id="modalChildren"></p>
             <p id="modalTravelMethod"></p>
@@ -82,14 +86,12 @@ function vehicle_booking_admin_page()
             <p id="modalVehicleBrand"></p>
             <p id="modalVehicleModel"></p>
             <p id="modalPlateNumber"></p>
-            <p id="modalDescription"></p>
             <p id="modalTotalPrice"></p>
         </div>
     </div>
-
-
 <?php
 }
+
 
 
 // Add admin submenu for settings

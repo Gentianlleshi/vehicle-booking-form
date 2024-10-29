@@ -16,6 +16,7 @@ document.addEventListener("DOMContentLoaded", function () {
         var modal = document.getElementById("eventModal");
         var modalTitle = document.getElementById("modalTitle");
         var modalName = document.getElementById("modalName");
+        var modalRoute = document.getElementById("modalRoute");
         var modalAdults = document.getElementById("modalAdults");
         var modalChildren = document.getElementById("modalChildren");
         var modalTravelMethod = document.getElementById("modalTravelMethod");
@@ -29,7 +30,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         modalTitle.textContent = info.event.title;
         modalName.textContent = info.event.extendedProps.name;
-
+        // modalRoute.textContent = "Route: " + info.event.extendedProps.route;
         modalAdults.textContent = "Adults: " + info.event.extendedProps.adults;
         modalChildren.textContent =
           "Children: " + info.event.extendedProps.children;
@@ -48,7 +49,7 @@ document.addEventListener("DOMContentLoaded", function () {
         modalPlateNumber.textContent =
           "Plate Number: " + info.event.extendedProps.plate_number;
 
-        modalDescription.textContent = info.event.extendedProps.description;
+        // modalDescription.textContent = info.event.extendedProps.description;
 
         // Show the modal
         modal.style.display = "flex";
