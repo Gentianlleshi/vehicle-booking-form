@@ -144,6 +144,8 @@ function handle_vehicle_booking_submission()
             $route = sanitize_text_field($_POST['route']);
             $travel_method = sanitize_text_field($_POST['travel_method']);
             $ferry_capacity = isset($options['ferry_capacity']) ? floatval($options['ferry_capacity']) : 40;
+            $bus_capacity = isset($options['bus_capacity']) ? intval($options['bus_capacity']) : 80;
+
 
 
             // Get prices from settings
@@ -180,6 +182,57 @@ function handle_vehicle_booking_submission()
             $adults_total = $adults * $adult_price;
             $children_total = $children * $child_price;
             $total_price += $adults_total + $children_total;
+
+            if ($travel_method === 'Ferry') {
+                // Get already booked surface area for the selected date and route for ferry
+                $booked_surface_area = $wpdb->get_var($wpdb->prepare(
+                    "SELECT SUM(surface_area) FROM {$wpdb->prefix}vehicle_bookings WHERE date = %s AND route = %s AND travel_method = %s",
+                    $date,
+                    $route,
+                    'Ferry'
+                ));
+
+                if (is_null($booked_surface_area)) {
+                    $booked_surface_area = 0;
+                }
+
+                // Calculate new total surface area if this booking is added
+                $new_total_surface_area = $booked_surface_area + $total_surface_area;
+
+                // Check if capacity is exceeded
+                if ($new_total_surface_area > $ferry_capacity) {
+                    // Capacity exceeded, show error message and do not proceed
+                    wc_add_notice('Please select another date for travel. On the current selected date, the ferry has no more space available.', 'error');
+                    return;
+                }
+            }
+
+            if ($travel_method === 'Bus') {
+                // Calculate total passengers in this booking
+                $booking_passengers = $adults + $children;
+
+                // Get already booked passengers for the selected date and route for bus
+                $booked_passengers = $wpdb->get_var($wpdb->prepare(
+                    "SELECT SUM(adults + children) FROM {$wpdb->prefix}vehicle_bookings WHERE date = %s AND route = %s AND travel_method = %s",
+                    $date,
+                    $route,
+                    'Bus'
+                ));
+
+                if (is_null($booked_passengers)) {
+                    $booked_passengers = 0;
+                }
+
+                // Calculate new total passengers if this booking is added
+                $new_total_passengers = $booked_passengers + $booking_passengers;
+
+                // Check if bus capacity is exceeded
+                if ($new_total_passengers > $bus_capacity) {
+                    // Capacity exceeded, show error message and do not proceed
+                    wc_add_notice('Please select another date for travel. On the current selected date, the bus has no more seats available.', 'error');
+                    return;
+                }
+            }
 
 
 

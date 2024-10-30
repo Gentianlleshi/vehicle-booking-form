@@ -213,6 +213,14 @@ function vehicle_booking_register_settings()
         'vehicle_booking_settings_page',
         'vehicle_booking_settings_section'
     );
+    // Bus Capacity
+    add_settings_field(
+        'bus_capacity',
+        'Bus Capacity (number of people)',
+        'vehicle_booking_bus_capacity_field',
+        'vehicle_booking_settings_page',
+        'vehicle_booking_settings_section'
+    );
 }
 add_action('admin_init', 'vehicle_booking_register_settings');
 
@@ -288,12 +296,22 @@ function vehicle_booking_motorcycle_price_field()
 <?php
 }
 
+function vehicle_booking_bus_capacity_field()
+{
+    $options = get_option('vehicle_booking_settings');
+?>
+    <input type="number" name="vehicle_booking_settings[bus_capacity]" value="<?php echo isset($options['bus_capacity']) ? esc_attr($options['bus_capacity']) : '80'; ?>" step="1" min="0">
+<?php
+}
+
+
 
 function vehicle_booking_sanitize_settings($input)
 {
     $sanitized = array();
 
     $sanitized['ferry_capacity'] = isset($input['ferry_capacity']) ? floatval($input['ferry_capacity']) : 40;
+    $sanitized['bus_capacity'] = isset($input['bus_capacity']) ? intval($input['bus_capacity']) : 80;
     $sanitized['bus_adult_price'] = isset($input['bus_adult_price']) ? floatval($input['bus_adult_price']) : 0;
     $sanitized['bus_child_price'] = isset($input['bus_child_price']) ? floatval($input['bus_child_price']) : 0;
     $sanitized['ferry_adult_price'] = isset($input['ferry_adult_price']) ? floatval($input['ferry_adult_price']) : 0;
